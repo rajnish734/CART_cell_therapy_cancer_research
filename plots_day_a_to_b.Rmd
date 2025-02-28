@@ -1,0 +1,307 @@
+---
+title: "plots_day_a_to_b"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Import libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(randomForest)
+library(caret)
+library(stringr)
+library(e1071) # For SVM
+library(MLeval)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+# Read Excel files
+# df_CBC_umich <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\Umich_data_with_demography.xlsx')
+
+# Get the current working directory 
+current_dir <- getwd()
+
+# Set the full file path
+data_path <- file.path(current_dir, "data_used", "Umich_data_with_demography.xlsx")
+
+# Read the CSV file
+df_CBC_umich <- read_excel(data_path)
+
+
+# df_CBC_JH <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\Test_data_JHU\\04-11-2024 JHMI data with changed names from JHMI Compiled CBC, No ALL, CRP_LOD_0.xlsx')
+data_path <- file.path(current_dir, "data_used", "04-11-2024 JHMI data.xlsx")
+# Read the CSV file
+df_CBC_JH <- read_excel(data_path)
+
+
+# Assign columns for analysis
+columns_for_analysis <- c('studyid', 'dpi', 'wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+                          'mch', 'mchc', 'rdw', 'mpv', 'absolute_neutrophil',
+                          'absolute_lymphocyte', 'absolute_monocyte', 'crp', 'ferritin', 
+                          'clinician_defined_crs_grade', 'NT_incidence', 'Age', 'Sex')
+``` 
+
+
+```{r}
+a <- 0
+b <- 3
+```
+
+
+
+```{r}
+# Selecting relevant columns for analysis
+df_umich <- df_CBC_umich %>% select(all_of(columns_for_analysis))
+df_JH <- df_CBC_JH %>% select(all_of(columns_for_analysis))
+df_JH <-na.omit(df_JH)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Converting 'NT_incidence' to integer
+df_JH$NT_incidence <- as.integer(df_JH$NT_incidence)
+df_JH$Sex <- factor(df_JH$Sex, levels = c("Male", "Female"))
+```
+
+
+```{r}
+# Columns to convert (if they are not already numeric, otherwise this step can be skipped)
+cols_to_convert <- c('wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 'mch', 
+                     'mchc', 'rdw', 'mpv', 'absolute_neutrophil', 'absolute_lymphocyte',
+                     'absolute_monocyte', 'crp')
+
+df_umich <- df_umich %>%
+  mutate(across(all_of(cols_to_convert), ~as.numeric(str_trim(.))))
+
+df_umich$Sex <- factor(df_umich$Sex, levels = c("Male", "Female"))
+
+df_umich$NT_incidence <- factor(df_umich$NT_incidence, levels = unique(df_umich$NT_incidence))
+df_JH$NT_incidence <- factor(df_JH$NT_incidence, levels = unique(df_JH$NT_incidence))
+```
+
+
+```{r}
+# Select a subset of study IDs (e.g., first 10)
+subset_ids <- unique(df_umich$studyid)
+
+ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+       aes(x = dpi, y = absolute_monocyte, color = studyid, group = studyid)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Absolute Monocyte Count Over Time (Subset of Participants)",
+       x = "Days Post Infusion (DPI)",
+       y = "Absolute Monocyte Count",
+       color = "Study ID")
+```
+
+```{r}
+# ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+#        aes(x = dpi, y = absolute_monocyte)) +
+#   geom_line() +
+#   facet_wrap(~studyid, scales = "free_y") +
+#   theme_minimal() +
+#   labs(title = "Changes in Absolute Monocyte Count Over Time",
+#        x = "Days Post Infusion (DPI)",
+#        y = "Absolute Monocyte Count")
+subset_ids <- unique(df_umich$studyid)[1:10]
+ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+       aes(x = dpi, y = absolute_monocyte)) +
+  geom_line() +
+  facet_wrap(~studyid, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Changes in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Absolute Monocyte Count"
+       )
+```
+
+```{r}
+ggplot(df_umich, aes(x = dpi, y = absolute_monocyte)) +
+  stat_summary(fun = mean, geom = "line", color = "blue") +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3) +
+  theme_minimal() +
+  labs(title = "Average Change in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Average Absolute Monocyte Count")
+``` 
+
+
+```{r}
+# ggplot(df_umich, aes(x = dpi, y = absolute_monocyte, group = studyid)) +
+#   geom_line(aes(color = factor(NT_incidence)), alpha = 0.3) +
+#   stat_summary(aes(group = 1), fun = mean, geom = "line", color = "black", size = 1.5) +
+#   facet_wrap(~NT_incidence, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+#   scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+#   theme_minimal() +
+#   labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+#        x = "Days Post Infusion",
+#        y = "Absolute Monocyte Count") +
+#   scale_x_continuous(breaks = 0:3) +
+#   theme(legend.position = "none")
+
+library(ggplot2)
+library(dplyr)
+
+ggplot(df_umich, aes(x = dpi, y = absolute_monocyte, color = factor(NT_incidence), 
+                     fill = factor(NT_incidence))) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3) +
+  facet_wrap(~ NT_incidence, ncol = 2, 
+             labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", 
+                                                  "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "pink")) +
+  theme_minimal() +
+  labs(title = "Average Change in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Average Absolute Monocyte Count") +
+  theme(strip.background = element_rect(fill = "lightgray"),
+        strip.text = element_text(size = 12, face = "bold"),
+        legend.position = "none") 
+
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+df_filtered <- df_umich %>%
+  filter(dpi >= 0 & dpi <= 3)
+
+ggplot(df_filtered, aes(x = dpi, y = absolute_monocyte, group = studyid, color = factor(NT_incidence))) +
+  geom_line(alpha = 0.5) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count",
+       color = "NT Incidence") +
+  scale_x_continuous(breaks = 0:3)
+```
+
+
+```{r}
+ggplot(df_filtered, aes(x = dpi, y = absolute_monocyte, group = studyid)) +
+  geom_line(aes(color = factor(NT_incidence)), alpha = 0.3) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line", color = "black", size = 1.5) +
+  facet_wrap(~NT_incidence, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count") +
+  scale_x_continuous(breaks = 0:3) +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+ggplot(df_filtered, aes(x = factor(dpi), y = absolute_monocyte, fill = factor(NT_incidence))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "salmon")) +
+  theme_minimal() +
+  labs(title = "Distribution of Absolute Monocyte Count by NT Incidence (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count",
+       fill = "NT Incidence")
+``` 
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+df_change <- df_umich %>%
+  filter(dpi >= 0 & dpi <= 3) %>%
+  group_by(studyid) %>%
+  mutate(
+    baseline_monocyte = first(absolute_monocyte),
+    monocyte_change = absolute_monocyte - baseline_monocyte,
+    NT_incidence = factor(NT_incidence)
+  ) %>%
+  ungroup()
+```
+
+
+```{r}
+ggplot(df_change, aes(x = factor(dpi), y = monocyte_change, color = NT_incidence)) +
+  # geom_boxplot(outlier.shape = NA) +
+  geom_boxplot() +
+  geom_jitter(width = 0.4, alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count",
+    color = "NT Incidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+ggplot(df_change, aes(x = dpi, y = monocyte_change, group = studyid, color = NT_incidence)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  stat_summary(aes(group = NT_incidence), fun = mean, geom = "line", size = 1.5) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count",
+    color = "NT Incidence"
+  ) +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = 0:3)
+
+# df_change$monocyte_change <- as.numeric(as.character(df_change$monocyte_change))
+# print(unique(round(df_change$monocyte_change, 5)))
+```
+
+```{r}
+ggplot(df_change, aes(x = dpi, y = monocyte_change, group = studyid, color = NT_incidence)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line", size = 1.5, color = "black") +
+  facet_wrap(~NT_incidence, ncol = 2, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count"
+  ) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = 0:3)
+```
+
+
+
+```{r}
+
+
+```
+
+
