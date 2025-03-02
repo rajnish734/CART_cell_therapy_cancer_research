@@ -1,0 +1,614 @@
+---
+title: "RFE_implementation_new_data_in_R"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Following optimal set up of features were discovered from RFE: > op_features_rfe
+ [1] "crp"                       "Age"                       "absolute_monocyte"         "rbc_count"                 "absolute_monocyte_dpi_2"  
+ [6] "absolute_lymphocyte"       "absolute_monocyte_dpi_0"   "crp_dpi_2"                 "crp_dpi_1"                 "absolute_monocyte_dpi_1"  
+[11] "rbc_count_dpi_1"           "crp_dpi_0"                 "mpv_dpi_0"                 "mch_dpi_0"                 "absolute_lymphocyte_dpi_2"
+[16] "rbc_count_dpi_2" 
+
+Here we are exploring these features through visualization of the dataset. 
+
+From Rashmi: Do absolute_neutrophyle and abs_neutrophyle/abs_lymphocyte and Lymphocyte. 
+
+
+```{r}
+# Import libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(randomForest)
+library(caret)
+library(stringr)
+library(e1071) # For SVM
+library(MLeval)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+# Read Excel files
+# df_CBC_umich <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\Umich_data_with_demography.xlsx')
+
+# Get the current working directory 
+current_dir <- getwd()
+
+# Set the full file path
+data_path <- file.path(current_dir, "data_used", "Umich_data_with_demography.xlsx")
+
+# Read the CSV file
+df_CBC_umich <- read_excel(data_path)
+
+
+# df_CBC_JH <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\Test_data_JHU\\04-11-2024 JHMI data with changed names from JHMI Compiled CBC, No ALL, CRP_LOD_0.xlsx')
+data_path <- file.path(current_dir, "data_used", "04-11-2024 JHMI data.xlsx")
+# Read the CSV file
+df_CBC_JH <- read_excel(data_path)
+
+
+# Assign columns for analysis
+columns_for_analysis <- c('studyid', 'dpi', 'wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+                          'mch', 'mchc', 'rdw', 'mpv', 'absolute_neutrophil',
+                          'absolute_lymphocyte', 'absolute_monocyte', 'crp', 'ferritin', 
+                          'clinician_defined_crs_grade', 'NT_incidence', 'Age', 'Sex')
+```
+
+
+
+```{r}
+a <- 0
+b <- 10
+```
+
+
+
+```{r}
+# Selecting relevant columns for analysis
+df_umich <- df_CBC_umich %>% select(all_of(columns_for_analysis))
+df_JH <- df_CBC_JH %>% select(all_of(columns_for_analysis))
+df_JH <-na.omit(df_JH)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Converting 'NT_incidence' to integer
+df_JH$NT_incidence <- as.integer(df_JH$NT_incidence)
+df_JH$Sex <- factor(df_JH$Sex, levels = c("Male", "Female"))
+```
+
+
+```{r}
+# Stripping white space from character columns in df_umich
+# character_columns <- df_umich %>% 
+#   select_if(is.character) %>% 
+#   names()
+# 
+# df_umich[character_columns] <- lapply(df_umich[character_columns], trimws)
+```
+
+
+
+```{r}
+# Columns to convert (if they are not already numeric, otherwise this step can be skipped)
+cols_to_convert <- c('wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 'mch', 
+                     'mchc', 'rdw', 'mpv', 'absolute_neutrophil', 'absolute_lymphocyte',
+                     'absolute_monocyte', 'crp')
+
+df_umich <- df_umich %>%
+  mutate(across(all_of(cols_to_convert), ~as.numeric(str_trim(.))))
+
+df_umich$Sex <- factor(df_umich$Sex, levels = c("Male", "Female"))
+
+df_umich$NT_incidence <- factor(df_umich$NT_incidence, levels = unique(df_umich$NT_incidence))
+df_JH$NT_incidence <- factor(df_JH$NT_incidence, levels = unique(df_JH$NT_incidence))
+```
+
+
+
+
+```{r}
+# Convert columns to numeric
+# for (col in cols_to_convert) {
+#   df_umich[[col]] <- as.numeric(df_umich[[col]])
+#   # If there are any non-convertible strings, they will be turned into NA
+# }
+
+# Map 'Sex' values from Male/Female to 0/1
+# sex_mapping <- c(Male = 0, Female = 1)
+# df_umich$Sex <- as.integer(factor(df_umich$Sex, levels = names(sex_mapping), labels = sex_mapping))
+# df_JH$Sex <- as.integer(factor(df_JH$Sex, levels = names(sex_mapping), labels = sex_mapping))
+
+# Subset data frames for day 0 of relevant dataset
+#df_umich_dpi_0 <- subset(df_umich, dpi == 0)
+#df_JH_dpi_0 <- subset(df_JH, dpi == 0)
+
+filtered_df_umich_a_to_b <- df_umich %>% filter(dpi >= a & dpi <= b)
+filtered_df_JH_a_to_b <- df_JH %>% filter(dpi >= a & dpi <= b)
+
+# Printing the number of measurements in day 0 datasets, using the sprintf function for string formatting
+cat(sprintf("no of measurements in filtered_df_umich_a_to_b is %s\n", nrow(filtered_df_umich_a_to_b)))
+cat(sprintf("no of measurements in filtered_df_JH_a_to_b is %s\n", nrow(filtered_df_JH_a_to_b)))
+
+
+```
+
+
+
+```{r}
+
+# Drop rows with NAs in specific columns. # We might have to drop NAs for all of the cases, because it might not be same variables that will NAs when you try different combinations of dpi's. 
+
+selected_cols <- c('crp', 'ferritin', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte')
+filtered_df_umich_a_to_b <- filtered_df_umich_a_to_b %>%
+  filter(complete.cases(select(., all_of(selected_cols))))
+
+# Create a vector of features to be standardized
+norm_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte', 
+               'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 
+               'mch', 'mchc', 'rdw', 'mpv', 'Age', 'crp', 'ferritin')
+
+# Standardize the data (Z-score normalization)
+filtered_df_umich_a_to_b_norm <- filtered_df_umich_a_to_b
+
+# Calculate mean and standard deviation for each column and then standardize
+filtered_df_umich_a_to_b_norm[norm_list] <- scale(filtered_df_umich_a_to_b_norm[norm_list])              # This is not for standardization being done based on JH dataset. 
+
+
+features_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte',
+                   'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+                   'mch', 'mchc', 'rdw', 'mpv', 'Sex', 'Age', 'crp', 'ferritin')
+```
+
+
+
+```{r}
+# library(dplyr)
+# 
+# # Check for participants with both NT_incidence values
+# participants_with_both <- df_umich %>%
+#   group_by(studyid) %>%
+#   summarize(unique_NT_incidence = n_distinct(NT_incidence)) %>%
+#   filter(unique_NT_incidence > 1)
+# 
+# # Display the results
+# print(participants_with_both)
+# 
+# # Check if any participants have both values
+# if (nrow(participants_with_both) > 0) {
+#   cat("The following participants have both 0 and 1 values for NT_incidence:\n")
+#   print(participants_with_both$studyid)
+# } else {
+#   cat("No participants have both 0 and 1 values for NT_incidence.\n")
+# }
+# 
+# # Count how many participants have both values
+# cat("\nNumber of participants with both values:", nrow(participants_with_both))
+```
+
+
+
+```{r}
+# Select a subset of study IDs (e.g., first 10)
+subset_ids <- unique(df_umich$studyid)
+
+ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+       aes(x = dpi, y = absolute_monocyte, color = studyid, group = studyid)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Absolute Monocyte Count Over Time (Subset of Participants)",
+       x = "Days Post Infusion (DPI)",
+       y = "Absolute Monocyte Count",
+       color = "Study ID")
+```
+
+```{r}
+# ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+#        aes(x = dpi, y = absolute_monocyte)) +
+#   geom_line() +
+#   facet_wrap(~studyid, scales = "free_y") +
+#   theme_minimal() +
+#   labs(title = "Changes in Absolute Monocyte Count Over Time",
+#        x = "Days Post Infusion (DPI)",
+#        y = "Absolute Monocyte Count")
+subset_ids <- unique(df_umich$studyid)[1:10]
+ggplot(df_umich %>% filter(studyid %in% subset_ids), 
+       aes(x = dpi, y = absolute_monocyte)) +
+  geom_line() +
+  # facet_wrap(~studyid, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Changes in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Absolute Monocyte Count")
+```
+
+```{r}
+ggplot(df_umich, aes(x = dpi, y = absolute_monocyte)) +
+  stat_summary(fun = mean, geom = "line", color = "blue") +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3) +
+  theme_minimal() +
+  labs(title = "Average Change in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Average Absolute Monocyte Count")
+``` 
+
+
+
+```{r}
+# ggplot(df_umich, aes(x = dpi, y = absolute_monocyte, group = studyid)) +
+#   geom_line(aes(color = factor(NT_incidence)), alpha = 0.3) +
+#   stat_summary(aes(group = 1), fun = mean, geom = "line", color = "black", size = 1.5) +
+#   facet_wrap(~NT_incidence, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+#   scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+#   theme_minimal() +
+#   labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+#        x = "Days Post Infusion",
+#        y = "Absolute Monocyte Count") +
+#   scale_x_continuous(breaks = 0:3) +
+#   theme(legend.position = "none")
+
+library(ggplot2)
+library(dplyr)
+
+ggplot(df_umich, aes(x = dpi, y = absolute_monocyte, color = factor(NT_incidence), 
+                     fill = factor(NT_incidence))) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3) +
+  facet_wrap(~ NT_incidence, ncol = 2, 
+             labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", 
+                                                  "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "pink")) +
+  theme_minimal() +
+  labs(title = "Average Change in Absolute Monocyte Count Over Time",
+       x = "Days Post Infusion (DPI)",
+       y = "Average Absolute Monocyte Count") +
+  theme(strip.background = element_rect(fill = "lightgray"),
+        strip.text = element_text(size = 12, face = "bold"),
+        legend.position = "none") 
+
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+df_filtered <- df_umich %>%
+  filter(dpi >= 0 & dpi <= 3)
+
+ggplot(df_filtered, aes(x = dpi, y = absolute_monocyte, group = studyid, color = factor(NT_incidence))) +
+  geom_line(alpha = 0.5) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count",
+       color = "NT Incidence") +
+  scale_x_continuous(breaks = 0:3)
+```
+
+
+
+
+```{r}
+ggplot(df_filtered, aes(x = dpi, y = absolute_monocyte, group = studyid)) +
+  geom_line(aes(color = factor(NT_incidence)), alpha = 0.3) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line", color = "black", size = 1.5) +
+  facet_wrap(~NT_incidence, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(title = "Change in Absolute Monocyte Count (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count") +
+  scale_x_continuous(breaks = 0:3) +
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+ggplot(df_filtered, aes(x = factor(dpi), y = absolute_monocyte, fill = factor(NT_incidence))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "salmon")) +
+  theme_minimal() +
+  labs(title = "Distribution of Absolute Monocyte Count by NT Incidence (Day 0-3)",
+       x = "Days Post Infusion",
+       y = "Absolute Monocyte Count",
+       fill = "NT Incidence")
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+df_change <- df_umich %>%
+  filter(dpi >= 0 & dpi <= 3) %>%
+  group_by(studyid) %>%
+  mutate(
+    baseline_monocyte = first(absolute_monocyte),
+    monocyte_change = absolute_monocyte - baseline_monocyte,
+    NT_incidence = factor(NT_incidence)
+  ) %>%
+  ungroup()
+```
+
+
+
+```{r}
+ggplot(df_change, aes(x = factor(dpi), y = monocyte_change, color = NT_incidence)) +
+  # geom_boxplot(outlier.shape = NA) +
+  geom_boxplot() +
+  geom_jitter(width = 0.4, alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count",
+    color = "NT Incidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+ggplot(df_change, aes(x = dpi, y = monocyte_change, group = studyid, color = NT_incidence)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  stat_summary(aes(group = NT_incidence), fun = mean, geom = "line", size = 1.5) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count",
+    color = "NT Incidence"
+  ) +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = 0:3)
+
+# df_change$monocyte_change <- as.numeric(as.character(df_change$monocyte_change))
+# print(unique(round(df_change$monocyte_change, 5)))
+```
+
+```{r}
+ggplot(df_change, aes(x = dpi, y = monocyte_change, group = studyid, color = NT_incidence)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  stat_summary(aes(group = 1), fun = mean, geom = "line", size = 1.5, color = "black") +
+  facet_wrap(~NT_incidence, ncol = 2, labeller = labeller(NT_incidence = c("0" = "NT Incidence = 0", "1" = "NT Incidence = 1"))) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  theme_minimal() +
+  labs(
+    title = "Change in Absolute Monocyte Count Relative to Day 0",
+    x = "Days Post Infusion",
+    y = "Change in Absolute Monocyte Count"
+  ) +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = 0:3)
+```
+```{r}
+df_umich <- df_umich %>% filter(dpi >= a & dpi <= b)
+```
+
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Assuming df_umich is already loaded in your environment
+
+# Create the plot
+ggplot(df_umich, aes(x = dpi, y = rbc_count, color = NT_incidence, group = NT_incidence)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+
+```
+```{r}
+ggplot(df_umich, aes(x = dpi, y = rbc_count, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, conf.int = 0.95, color = NA) +
+  labs(title = "RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+ggplot(df_umich, aes(x = dpi, y = crp, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "crp Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "crp") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+```{r}
+ggplot(df_umich, aes(x = dpi, y = absolute_lymphocyte, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "absolute_lymphocyte Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "absolute_lymphocyte") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+
+```
+
+
+
+```{r}
+ggplot(df_umich, aes(x = dpi, y = mpv, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "mpv Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "mpv") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+
+```{r}
+# Reshape the data
+df_long <- df_umich %>%
+  select(dpi, NT_incidence, absolute_neutrophil, absolute_lymphocyte) %>%
+  pivot_longer(cols = c(absolute_neutrophil, absolute_lymphocyte), 
+               names_to = "cell_type", 
+               values_to = "count")
+
+# Create the plot using ggplot2
+ggplot(df_long, aes(x = dpi, y = count, color = NT_incidence, linetype = cell_type, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Absolute Neutrophil and Lymphocyte Counts Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Cell Count",
+       linetype = "Cell Type") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+```{r}
+# Calculate the ratio
+df_umich <- df_umich %>%
+  mutate(neutrophil_lymphocyte_ratio = absolute_neutrophil / absolute_lymphocyte)
+  # mutate(neutrophil_lymphocyte_ratio =  absolute_lymphocyte / absolute_neutrophil )
+
+# Create the plot using ggplot2
+ggplot(df_umich, aes(x = dpi, y = neutrophil_lymphocyte_ratio, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Neutrophil/Lymphocyte Ratio Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Neutrophil/Lymphocyte Ratio") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+```{r}
+df_umich <- df_umich %>%
+  mutate(product_crp_monocyte_rbc = crp * absolute_monocyte * rbc_count)
+
+# Create the plot using ggplot2
+ggplot(df_umich, aes(x = dpi, y = product_crp_monocyte_rbc, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Product of CRP, Absolute Monocyte, and RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Product of CRP, Absolute Monocyte, and RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+```{r}
+df_umich <- df_umich %>%
+  mutate(product_monocyte_rbc = absolute_monocyte * rbc_count)
+
+# Create the plot using ggplot2
+ggplot(df_umich, aes(x = dpi, y = product_monocyte_rbc, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Product of  Absolute Monocyte, and RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Product of Absolute Monocyte, and RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+
+
+```{r}
+df_umich <- df_umich %>%
+  mutate(product_crp_rbc = crp * rbc_count)
+
+# Create the plot using ggplot2
+ggplot(df_umich, aes(x = dpi, y = product_crp_rbc, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Product of CRP,  and RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Product of CRP,  and RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
+```{r}
+df_umich <- df_umich %>%
+  mutate(ratio_crp_rbc = crp / rbc_count)
+   # mutate(ratio_crp_rbc = crp / rbc_count)
+
+# Create the plot using ggplot2
+ggplot(df_umich, aes(x = dpi, y = ratio_crp_rbc, color = NT_incidence, fill = NT_incidence)) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  stat_summary(fun.data = mean_cl_normal, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(title = "Ratio of CRP,  and RBC Count Across Days Post Infusion",
+       x = "Days Post Infusion (dpi)",
+       y = "Ratio of CRP,  and RBC Count") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) +
+  scale_color_manual(values = c("blue", "red"), labels = c("No NT", "NT")) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No NT", "NT"))
+```
+
