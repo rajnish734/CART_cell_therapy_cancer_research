@@ -1,0 +1,628 @@
+---
+title: "RFE_CBC_new_data"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This code includes cleaning steps from Rashmi's code, and RFE implementation for feature selection with Random Forest as a feature selector. The code is taken from following link:
+
+https://towardsdatascience.com/effective-feature-selection-recursive-feature-elimination-using-r-148ff998e4f7
+
+
+Copy pasting code from Rashmi's file here: 
+
+---
+title: "CBC_analysis_DPI_0"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## R Markdown
+
+Note: This file is for PCA analysis, and ML implementation with all the decided models, only on DPI ==0.
+Note : Make sure to drop the columns closely associated with NT Grade, and ICANs etc. in the factor analysis as well as subsequent prediction. 
+Note: In Mary's code, there was another filter considering DPI_onset along with DPI = 0. Confirm it with everyone, what is post infusion etc. 
+
+```{r}
+#To install pca.utils
+# install.packages("remotes")
+# remotes::install_github("nchlis/pca.utils")
+```
+
+```{r}
+#load libraries
+
+library(dplyr)
+library(tidyverse) #general data cleaning and organization
+library(Boruta) #Recursive feature elimination
+library(caret) # Logistic regression
+library(MLeval)
+library(psych)
+library(e1071) 
+library(caTools) 
+library(class)
+library(ggcorrplot)
+library(factoextra)
+library(readxl)
+library(magrittr)
+library(readr)
+library(writexl)
+library(pROC)
+```
+
+#This says what each chunk does 
+```{r}
+#This says what each line of code does/ 
+#'[This is to document results 
+#'*This is for to dos and notes to self/others*
+in_path <- "Datasets/"
+out_path <- "Results/"
+```
+
+#Importing datasets 
+```{r}
+# Importing demographic and CBC data for our patients. This is the new data that Michelle pulled from redcap in Feb 2024 
+# cbc_alldays <- read_xlsx("Datasets/02-26-2024 CBC_data.xlsx")
+cbc_alldays <- read_xlsx("C:\\Users\\rajnishk\\University of Michigan Dropbox\\MSA-Tewari Lab\\Tewari Lab-Projects\\CART\\2022 Continued Olink and CBC analysis\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\02-26-2024 CBC_data.xlsx")
+
+# demographics <- read_xlsx("Datasets/02-26-2024 Demographic data.xlsx") #This is missing diagnoses from LTFU patients 
+demographics <- read_xlsx("C:\\Users\\rajnishk\\University of Michigan Dropbox\\MSA-Tewari Lab\\Tewari Lab-Projects\\CART\\2022 Continued Olink and CBC analysis\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\02-26-2024 Demographic data.xlsx")
+# LTFU_diagnosis <- read.csv("Datasets/LTFU_CART_dx_treat_info.csv") #This contains the diagnoses for LTFU patients 
+
+LTFU_diagnosis <- read.csv("C:\\Users\\rajnishk\\University of Michigan Dropbox\\MSA-Tewari Lab\\Tewari Lab-Projects\\CART\\2022 Continued Olink and CBC analysis\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\LTFU_CART_dx_treat_info.csv")
+```
+```{r}
+```
+
+
+---------------------------------------------------------
+##Cleaning the cbc_alldays data  
+```{r}
+cbc_alldays <- cbc_alldays %>% 
+  rename(studyid = record_id...1,
+         dpi = days_since_cart_cbc) %>% 
+  mutate(crs_incidence = ifelse(crs_incidence == TRUE, 1, ifelse(crs_incidence == FALSE, 0, NA))) %>% #changing CRS and ICANS incidence to 0/1
+  mutate(NT_incidence = ifelse(NT_incidence == TRUE, 1, ifelse(NT_incidence == FALSE, 0, NA)))
+
+
+
+cbc_alldays <- cbc_alldays %>%  #remove blank rows between patients and a repeat heading row
+  filter(!is.na(studyid)) %>% 
+  filter(studyid != "patient_id")
+
+```
+
+#This chunk removes the "(H)" and "(L)" after CBC values, remove > and < signs 
+```{r}
+columns <- colnames(cbc_alldays)
+
+for (column in columns) {
+cbc_alldays[[column]] <- gsub("\\([^()]*\\)", "", cbc_alldays[[column]])
+cbc_alldays[[column]] <- gsub("[><]", "", cbc_alldays[[column]])
+}
+```
+
+#cleaning ferritin column
+```{r}
+cbc_alldays %>% 
+  filter(is.na(ferritin)) %>% 
+  dplyr::count()
+#'[There are 354 missing ferritin values  
+cbc_alldays$ferritin <- gsub(",", "", cbc_alldays$ferritin) #remove commas 
+
+cbc_alldays$ferritin <- gsub("(\\.[0-9]).*", "\\1", cbc_alldays$ferritin) #for some reason values with many decimal places were turning into NAs when I converted them to class is.numeric, so I retined only 1 decimal point. 
+
+cbc_alldays$ferritin <- as.numeric(cbc_alldays$ferritin)
+#'[still 354 missing ferritin values, the conversion of class did not lead to loss of any data 
+```
+
+
+#Cleaning demographics and joining it to cbc_alldays
+```{r}
+LTFU_cases <- demographics %>%  filter(is.na(Diagnosis)) # All LTFU cases are missing the diagnosis column 
+SC_cases <- demographics %>% filter(!is.na(Diagnosis))
+
+#Getting the diagnosis of LTFU cases from the LTFU_diagnosis
+LTFU_diagnosis$Record.ID <- gsub("-", "", LTFU_diagnosis$Record.ID)
+LTFU_diagnosis <- LTFU_diagnosis %>% rename(StudyID = Record.ID)
+LTFU_cases <- left_join(LTFU_cases,LTFU_diagnosis, by = "StudyID") 
+LTFU_cases <- LTFU_cases %>% select (StudyID, Age, Sex, Race, Ethnicity, Diagnosis.y, `CAR-T therapy`) %>% rename(Diagnosis = Diagnosis.y) 
+
+demo_with_LTFU_diagnosis <- bind_rows(SC_cases, LTFU_cases)
+
+cbc_alldays_withdemo <- left_join(cbc_alldays, demo_with_LTFU_diagnosis, by = c("studyid" = "StudyID"))
+```
+
+
+```{r}
+write_xlsx(cbc_alldays_withdemo, "Results/04-18-24 cbc_alldays_withdemo.xlsx") 
+```
+
+----------------------------------------------------
+#Imports clean cbc dataset
+```{r}
+cbc_alldays <- read_xlsx("Datasets/04-18-24 cbc_alldays_withdemo.xlsx") #Training data from UM
+jhmi <- read_csv("Datasets/JHMI Compiled CBC, No ALL, CRP_LOD_0.csv") #Testing data from JH 
+```
+
+#Preparing training data
+#'*Should add tocilizumab to this....maybe..... not in testing*
+
+#'*IMPORTANT: CHECK HOW MANY VRIABLES WENT MISSING HERE*
+
+```{r}
+cbc_alldays <- cbc_alldays %>%  mutate(Sex = ifelse(Sex == "Male", 0, 
+                                                    ifelse(Sex == "Female", 1, NA))) #1. Code sex as a numeric 
+cbc_pca <- cbc_alldays %>% select(studyid, dpi, wbc_count, hgb, hct, plt, rbc_count, mcv, mch, mchc, rdw, 
+                                  mpv, absolute_neutrophil, absolute_lymphocyte, absolute_monocyte, 
+                                  crp, ferritin, clinician_defined_crs_grade, NT_incidence, Age, Sex) #2. Select variables of interest
+cbc_pca[] <- lapply(cbc_pca, str_trim) #some variables had spaces in character columns, so they could not be converted to numeric values. 
+#cbc_pca <- mutate_all(cbc_pca, as.numeric) #3. Converting all variables to numeric class.
+#'[MPV had 5 missing --> 115 missing after converting to numeric: 110 of them were "Not Measured" 
+#'[Clinican defined CRS grade had 0 missing --> 360 after converting to numeric: all 360 of them were "NA"
+#'[Remaining variables did not change 
+# 4. remove all missing 
+
+cbc_pca[, 2:21] <- lapply(cbc_pca[, 2:21], as.numeric)
+
+training_data_alldays <- na.omit(cbc_pca)
+
+```
+
+#to check the number of missing variables in each dataset 
+```{r}
+na_count <- colSums(is.na(cbc_alldays))
+print(na_count)
+
+na_count_2 <- colSums(is.na(cbc_pca))
+print(na_count_2)
+```
+
+##Preparing JH data for testing 
+```{r}
+#Renaming variables to match UM column names 
+jhmi <- jhmi %>% 
+  rename(dpi = DPI, 
+         studyid = StudyID,
+                        wbc_count = WBC,
+                        hgb = HGB, 
+                        hct = HCT, 
+                        plt = PLT, 
+                        rbc_count = RBC, 
+                        mcv = MCV, 
+                        mch = MCH, 
+                        mchc = MCHC, 
+                        rdw = RDW, 
+                        mpv = MPV, 
+                        absolute_neutrophil = `NEU#`, 
+                        absolute_lymphocyte = `LYMP#`, 
+                        absolute_monocyte = `MON#`, 
+                        crp = CRP, 
+                        ferritin = Ferritin, 
+                        clinician_defined_crs_grade = CRS_Grade, 
+                        NT_incidence = NT_Incidence)
+#1. Code sex as a numeric 
+jhmi <- jhmi %>%  mutate(Sex = ifelse(Sex == "Male", 0, 
+                                                    ifelse(Sex == "Female", 1, NA)))
+#Code NT_incidence as a numeric 
+jhmi <- jhmi %>% mutate(NT_incidence = ifelse(NT_incidence == TRUE, 1, 
+                                                        ifelse(NT_incidence == FALSE, 0, NA))) 
+#2. Select the same variables of interest 
+jhmi_alldays <-jhmi %>% select(studyid, dpi, wbc_count, hgb, hct, plt, rbc_count, 
+         mcv, mch, mchc, rdw, mpv, absolute_neutrophil, 
+         absolute_lymphocyte, absolute_monocyte, crp, ferritin, 
+         clinician_defined_crs_grade, NT_incidence, Age, Sex)
+
+#Convert all to numeric class 
+#jhmi_alldays <- mutate_all(jhmi_alldays, as.numeric)
+jhmi_alldays[, 2:21] <- lapply(jhmi_alldays[, 2:21], as.numeric)
+
+
+#remove all missing 
+
+testing_data_alldays <- na.omit(jhmi_alldays)
+#write_xlsx(jhmi, "Datasets/04-11-2024 JHMI data with changed names from JHMI Compiled CBC, No ALL, CRP_LOD_0.xlsx")
+```
+
+
+#'*Check if the same patients are represented many times?*
+#'*Add number of patients*
+
+```{r}
+train0 <- training_data_alldays %>% filter(dpi == 0)
+train01 <- training_data_alldays %>% filter(dpi == 0|dpi == 1)
+train02 <- training_data_alldays %>% filter(dpi == 0|dpi == 1| dpi == 2)
+train03 <- training_data_alldays %>% filter(dpi == 0|dpi == 1| dpi == 2| dpi == 3)
+train13 <- training_data_alldays %>% filter(dpi == 1| dpi == 2| dpi == 3)
+```
+
+
+```{r}
+test0 <- testing_data_alldays %>% filter (dpi == 0)
+test01 <- testing_data_alldays %>% filter (dpi == 0|dpi == 1)
+test02 <- testing_data_alldays %>% filter (dpi == 0|dpi == 1| dpi == 2)
+test03 <- testing_data_alldays %>% filter (dpi == 0|dpi == 1| dpi == 2| dpi == 3)
+test13 <- testing_data_alldays %>% filter (dpi == 1| dpi == 2| dpi == 3)
+```
+
+______________________________
+#PCA day 0 
+```{r}
+train_no_outcome0 <- train0 %>% select(- c(NT_incidence, dpi, studyid)) #removing NT_Incidence (outcome variable), DPI (0 for all ) and StudyID for all
+
+pca0 <- prcomp(train_no_outcome0, center = TRUE, scale. = TRUE) #runs the PCA 
+#Data is centered and scaled - prcomp automatically centers but does not automatically scale. 
+
+summary(pca0)
+
+plot(pca0, type = "l", main = "Scree Plot") # pplots a scree plot 
+#'[7 or 8 PC components looks good - 1 - 8 cumulatively explain 93% of variance]
+biplot(pca0, main = "PCA Biplot", cex = 0.6)
+
+pcainput0_8 <- pca0$x[, 1:8] #selecting PC 1 - 8 
+train_pca0 <- data.frame(pcainput0_8, Target = train0$NT_incidence) # rejoining NT incidence - the outcome of interest 
+
+#Labeling outcome data and denoting it as a factor 
+train_pca0$Target <- as.factor(train_pca0$Target)
+train_pca0$Target <- factor(train_pca0$Target, levels = c(0, 1), labels = c("No_NT", "NT"))
+```
+#Center and scale the test data using training data means and sds. 
+Project testing data onto training data pca loadings 
+```{r}
+# Center and scale the testing data 
+training_means0 <- colMeans(train_no_outcome0)
+training_sds0 <- apply(train_no_outcome0, 2, sd)
+test_no_outcome0 <- test0 %>% select(- c(NT_incidence, dpi, studyid))
+test_normalized0 <- scale(test_no_outcome0, center = training_means0, scale = training_sds0)
+
+#The testing data needs to be on the same scale as the training data. 
+#To prevent data leakage: information from the testing data should not influence the model
+
+test_normalized0_matrix <- as.matrix(test_normalized0)
+# Project new data onto PCA axes using the loadings from the original PCA
+pca_loadings0 <- pca0$rotation
+test_pca0_all <- test_normalized0_matrix  %*% pca_loadings0
+
+test_pca0 <- test_pca0_all[, 1:8]
+```
+
+
+
+
+```{r}
+set.seed(123)
+
+control <- trainControl(method="cv", number=10,
+                        summaryFunction=twoClassSummary, 
+                        classProbs=TRUE, 
+                        savePredictions=TRUE) 
+
+#trainControl specifies various parameters for the training process
+#method = cross validation, number = 10 - this means 10 fold cross validation 
+# twoClassSummary function - used for binary classifiers to calculate performance metrics like sensitivity, specificity, and AUC-ROC 
+#classProbs = true - class probabilities should be recorded for each fold of the cross validation process 
+#savePredictions - models predictions for each re-sampling should be saved. Good for examining the predictions for detailed evaluations 
+
+#'*How do i select how much to cross validate?? is n = 10 too much.... maybe not... but what is the best number?*
+
+```
+
+
+#svm model - Radial basis function kernel 
+```{r}
+svm_model <- train(Target ~ ., #Target is the outcome variable and all the others are predictors 
+                 data = final_data, 
+                 method = "svmRadial", # SVM radial basis function kernel
+                 trControl = control, 
+                 metric="ROC")
+
+View(svm_model$results)
+View(svm_model$pred) # to look at each cross validation iteration. 
+#View(svm_model)
+
+#Sigma controls the width of the kernel 
+#Sigma is held constant when performing hyperparameter tuning for an SVM with a radial basis function (RBF) kernel. 
+#'*I don't know why??*
+#C is the cost parameter - higher cost means a higher penalty for misclassification 
+#The presence of these standard deviations (ROCSD, SensSD, SpecSD) alongside the mean values (ROC, Sens, Spec) provides insight into the reliability and stability of the model across different cross-validation folds. If you see that the standard deviation is relatively low compared to the mean metric values, it may indicate that the model performance is stable across different samples of the data. Conversely, a high standard deviation suggests that the model's performance varies significantly with different subsets of the data, which could be a sign of overfitting or a model not generalizing well.
+#
+```
+
+#svm model - Radial basis function kernel 
+```{r}
+# The RBF kernel, also known as the Gaussian kernel, is a popular kernel function used in SVM classification that can handle non-linear relationships between class labels and attributes.
+
+#The RBF kernel can map inputs into a higher-dimensional space where the classes are more clearly separated, even if they are not linearly separable in the original input space. Essentially, it adds non-linearity to the decision boundary, allowing for more complex models.
+
+svm_radial <- train(Target ~ ., #Target is the outcome variable and all the others are predictors 
+                 data = final_data, 
+                 method = "svmRadial", # SVM radial basis function kernel
+                 trControl = control, 
+                 metric="ROC")
+
+View(svm_model$results)
+View(svm_model$pred) # to look at each cross validation iteration. 
+View(svm_model)
+```
+
+#svm model with linear kernel
+```{r}
+set.seed(825)
+#If relationships between features and the target are non-linear, a different kernel such as a Radial Basis Function (RBF), polynomial, or sigmoid might be more appropriate. 
+
+#'*plot the relaitonship between features and targets*
+
+svm_linear0 <- train(Target ~ ., #Target is the outcome variable and all the others are predictors 
+                 data = train_pca0, 
+                 method = "svmLinear", # linear kernel 
+                 trControl = control, 
+                 metric="ROC", preProc = c("center", "scale"))
+
+#The linear kernel is the simplest kernel function used in SVMs. It is essentially just the dot product of two vectors, which implies no additional computation for mapping input features into an expanded feature space. A linear kernel means that the boundary or the decision surface between the classes in your data is a straight line (or hyperplane, in multi-dimensional space).
+
+#View(svm_linear0$results)
+#View(svm_linear0$pred) # to look at each cross validation iteration. 
+#View(svm_linear0)
+
+##GLM net 
+
+GLM_net0 <- train(Target ~ ., 
+                  data = train_pca0, 
+                 method = "glmnet", 
+                 trControl = control, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+##Regularized logistic regression 
+
+RLR0 <- train(Target ~ ., data = train_pca0, 
+                 method = "regLogistic", 
+                 trControl = control, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+
+##KNN 
+KNN0 <- train(Target ~ ., data = train_pca0, 
+                 method = "knn", 
+                 trControl = control,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+##PLR 
+PLR0 <- train(Target ~ ., data = train_pca0, 
+                 method = "plr", 
+                 trControl = control,
+                 metric = "ROC", preProc = c("center", "scale"))
+##BLR
+BLR0 <- train(Target ~ ., data = train_pca0, 
+                 method = "LogitBoost", 
+                 trControl = control, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+##Random Forest 
+RF0 <- train(Target ~ ., data = train_pca0, 
+                 method = "rf", 
+                 trControl = control, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+```
+
+#ROC curves for training 
+```{r}
+
+```
+
+
+```{r}
+set.seed(825)
+##Confusion matric for SVM
+svm_predictions0 <-  predict(svm_linear0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+svmconf_matrix0  <- confusionMatrix(as.factor(svm_predictions0), as.factor(test0$Target), positive = "NT")
+print(svmconf_matrix0)
+
+
+##Confusion matrix for glmnet 
+
+glmnet_predictions0 <-  predict(GLM_net0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+glmnetconf_matrix0  <- confusionMatrix(as.factor(glmnet_predictions0), as.factor(test0$Target), positive = "NT")
+print(glmnetconf_matrix0)
+
+##Confusion matrix for RLR 
+rlr_predictions0 <-  predict(RLR0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+rlrconf_matrix0  <- confusionMatrix(as.factor(rlr_predictions0), as.factor(test0$Target), positive = "NT")
+print(rlrconf_matrix0)
+
+##Confusion matrix for KNN
+knn_predictions0 <-  predict(KNN0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+knnconf_matrix0  <- confusionMatrix(as.factor(knn_predictions0), as.factor(test0$Target), positive = "NT")
+print(knnconf_matrix0)
+
+##Confusion matrix for PLR
+plr_predictions0 <-  predict(PLR0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+plrconf_matrix0  <- confusionMatrix(as.factor(plr_predictions0), as.factor(test0$Target), positive = "NT")
+print(plrconf_matrix0)
+
+##Confusion matrix for BLR
+blr_predictions0 <-  predict(BLR0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+blrconf_matrix0  <- confusionMatrix(as.factor(blr_predictions0), as.factor(test0$Target), positive = "NT")
+print(blrconf_matrix0)
+
+##Confusion matrix for RF
+rf_predictions0 <-  predict(RF0, newdata = test_pca0)
+
+test0$Target <- factor(test0$NT_incidence, levels = c(0, 1), labels = c("No_NT", "NT"))
+rfconf_matrix0  <- confusionMatrix(as.factor(rf_predictions0), as.factor(test0$Target), positive = "NT")
+print(rfconf_matrix0)
+
+```
+
+```{r}
+set.seed(825)
+pdf("Results/Testing individual models - day0.pdf")
+##ROC for SVM 
+
+prob_SVM0 <- predict(svm_linear0, test_pca0, type="prob") 
+positive_probs_svm0 <- prob_SVM0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_svm0 <- roc(response = true_labels0, predictor = positive_probs_svm0)
+
+plot1 <- plot(roc_svm0, main = "Testing SVM Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_svm0), 2)), pos = 4, cex = 1.2)
+svmauc0 <- round(auc(roc_svm0),2)
+
+
+##ROC for GLMnet 
+
+prob_glmnet0 <- predict(GLM_net0, test_pca0, type="prob") 
+positive_probs_glmnet0 <- prob_glmnet0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_glmnet0 <- roc(response = true_labels0, predictor = positive_probs_glmnet0)
+
+plot2 <- plot(roc_glmnet0, main = "Testing GLMnet Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_glmnet0), 2)), pos = 4, cex = 1.2)
+glmnetauc0 <- round(auc(roc_glmnet0),2)
+
+##ROC for RLR
+
+prob_rlr0 <- predict(RLR0, test_pca0, type="prob") 
+positive_probs_rlr0 <- prob_rlr0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_rlr0 <- roc(response = true_labels0, predictor = positive_probs_rlr0)
+
+plot3 <- plot(roc_rlr0, main = "Testing RLR Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_rlr0), 2)), pos = 4, cex = 1.2)
+rlrauc0 <- round(auc(roc_rlr0),2)
+
+##ROC for KNN 
+
+prob_knn0 <- predict(KNN0, test_pca0, type="prob") 
+positive_probs_knn0 <- prob_knn0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_knn0 <- roc(response = true_labels0, predictor = positive_probs_knn0)
+
+plot4 <- plot(roc_knn0, main = "Testing KNN Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_knn0), 2)), pos = 4, cex = 1.2)
+knnauc0 <- round(auc(roc_knn0),2)
+
+##ROC for PLR 
+
+prob_plr0 <- predict(PLR0, test_pca0, type="prob") 
+positive_probs_plr0 <- prob_plr0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_plr0 <- roc(response = true_labels0, predictor = positive_probs_plr0)
+
+plot5 <- plot(roc_plr0, main = "Testing PLR Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_plr0), 2)), pos = 4, cex = 1.2)
+
+plrauc0 <- round(auc(roc_plr0),2)
+
+##ROC for BLR 
+
+prob_blr0 <- predict(BLR0, test_pca0, type="prob") 
+positive_probs_blr0 <- prob_blr0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_blr0 <- roc(response = true_labels0, predictor = positive_probs_blr0)
+
+plot6 <- plot(roc_blr0,  main = "Testing BLR Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_blr0), 2)), pos = 4, cex = 1.2)
+blrauc0 <- round(auc(roc_blr0),2)
+
+##ROC for RF 
+prob_rf0 <- predict(RF0, test_pca0, type="prob") 
+positive_probs_rf0 <- prob_rf0[, "NT"]
+true_labels0 <- test0$Target
+
+roc_rf0 <- roc(response = true_labels0, predictor = positive_probs_rf0)
+rfauc0 <- round(auc(roc_rf0),2)
+plot7 <- plot(roc_rf0, main = "Testing RF Model on day 0")
+text(0.2, 0.0, paste("AUC =", round(auc(roc_rf0), 2)), pos = 4, cex = 1.2)
+
+dev.off()
+```
+
+
+```{r}
+set.seed(825)
+#Superimpose plots 
+pdf("Results/Testing all models - day 0.pdf")
+
+Test_0_plot <- plot(roc_svm0, col = "blue")
+plot(roc_glmnet0, col = "red", add = TRUE)
+plot(roc_rlr0, col = "green", add = TRUE)
+plot(roc_knn0, col = "yellow", add = TRUE)
+plot(roc_plr0, col = "pink", add = TRUE)
+plot(roc_blr0, col = "purple", add = TRUE)
+plot(roc_rf0, col = "orange", add = TRUE)
+
+
+legend("bottomright", legend = c(paste("SVM, AUC =",svmauc0), paste("GLMnet, AUC =",glmnetauc0), paste("RLR, AUC =",rlrauc0),paste("KNN, AUC =",knnauc0), paste("PLR, AUC =",plrauc0), paste("BLR, AUC =",blrauc0), paste("RF, AUC =",rfauc0)),
+       col = c("blue", "red", "green", "yellow", "pink", "purple", "orange"), lty = 1, cex = 0.8)
+
+dev.off()
+```
+
+
+#Regularization: 
+L2: alpha = 0, Does not set coefficients to 0 but shrinks them towards 0 
+Ridge regression - good for small datasets because it makes predictions less sensitive to the training data 
+L1: alpha = 1, lasso penalty - can set coefficients to 0 
+elastic net regression - alpha between 0 and 1: The model will apply both penalties with the proportion governed by alpha 
+
+```{r}
+
+
+
+## See what value of alpha was selected
+#print(model$bestTune$alpha)
+```
+
+
+```{r}
+
+
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
