@@ -1,0 +1,62 @@
+---
+title: "CBC_prediction_onUM_JH"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+For the implementation of ML models. The implementation steps along with the selected files are mentioned here: 
+
+
+
+```{r}
+#load libraries
+library(plyr)
+library(tidyverse)    #general data cleaning and organization
+library(Boruta) #Recursive feature elimination
+library(caret) # Logistic regression
+library(MLeval)
+library(psych)
+# Loading package 
+library(e1071) 
+library(caTools) 
+library(class)
+```
+
+Load data sets.
+
+```{r pressure, echo=FALSE}
+# Day 0 is the baseline. Let us apply Boruta on DPI==0. We will later do it for multiple number of days.
+
+CBC_DPI_all <- read.csv("C:/Users/rajnishk/Dropbox (University of Michigan)/2023-09-25 CBC CART for Benjie and Rajnish from Mary/Only_UM_LTFU_CBC_Data_with_matched_CRP_Ferritin_LOD_0.csv")
+
+CBC_UM_train <- cbind(CBC_DPI_all,group = 'UM')
+
+CBC_DPI_JH_all <-read.csv("C:/Users/rajnishk/Dropbox (University of Michigan)/2023-09-25 CBC CART for Benjie and Rajnish from Mary/JHMI Compiled CBC, No ALL, CRP_LOD_0.csv")
+
+CBC_JH_test <- cbind(CBC_DPI_JH_all,group = 'JH')
+
+CBC_train_test <- rbind(CBC_UM_train,CBC_JH_test)  # Entire data set combine together so that scaling and preprocessing etc. becomes easy.
+
+
+```
+In here we will do the prediction for DPI == 0 for the entire dataset. 
+
+```{r}
+CBC_DPI_0_only<- CBC_train_test%>%filter(DPI==0) # This is the dataset with all the values for DPI ==0
+set.seed(1)
+
+CBC_DPI_0_only <-subset(CBC_DPI_0_only,select = -c(StudyID,CRS_Incidence, Max_CRS,NEU.,LYMP.,MON. , DP_CRS_Onset,Max_NT,NT_Grade,Placeholder_DPI,During.Chemo.,After.Chemo,DP_NT_Onset  ))
+
+# We can also predict Max_NT later on. 
+
+CBC_DPI_0_only_na_dropped <- na.omit(CBC_DPI_0_only) # After dropping rows with NA's in them. 
+
+
+```
