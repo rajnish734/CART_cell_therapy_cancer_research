@@ -1,0 +1,740 @@
+---
+title: "RFE_implementation_new_data_in_R"
+author: "Rajnish Kumar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+We will need to include additional features that include readings from previous days, e,g, on day 2 , features will be from day 0, 1, and 2. Similarly for day 3, features will be from day 0, 1, 2, and 3. 
+
+```{r}
+# Import libraries
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(randomForest)
+library(caret)
+library(stringr)
+library(e1071) # For SVM
+library(MLeval)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+# Read Excel files
+# df_CBC_umich <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\cleaned_data_from_Rashmi\\Umich_data_with_demography.xlsx')
+
+# Get the current working directory 
+current_dir <- getwd()
+
+# Set the full file path
+data_path <- file.path(current_dir, "data_used", "Umich_data_with_demography.xlsx")
+
+# Read the CSV file
+df_CBC_umich <- read_excel(data_path)
+
+
+# df_CBC_JH <- read_excel('C:\\Users\\rajnishk\\Dropbox (University of Michigan)\\2023-09-25 CBC CART for Benjie and Rajnish from Mary\\data folder 4-4-2024\\Test_data_JHU\\04-11-2024 JHMI data with changed names from JHMI Compiled CBC, No ALL, CRP_LOD_0.xlsx')
+data_path <- file.path(current_dir, "data_used", "04-11-2024 JHMI data.xlsx")
+# Read the CSV file
+df_CBC_JH <- read_excel(data_path)
+
+
+# Assign columns for analysis
+columns_for_analysis <- c('studyid', 'dpi', 'wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+                          'mch', 'mchc', 'rdw', 'mpv', 'absolute_neutrophil',
+                          'absolute_lymphocyte', 'absolute_monocyte', 'crp', 'ferritin', 
+                          'clinician_defined_crs_grade', 'NT_incidence', 'Age', 'Sex')
+```
+
+
+```{r}
+a <- 0
+b <- 1
+```
+
+
+
+```{r}
+# Selecting relevant columns for analysis
+df_umich <- df_CBC_umich %>% select(all_of(columns_for_analysis))
+df_JH <- df_CBC_JH %>% select(all_of(columns_for_analysis))
+df_JH <-na.omit(df_JH)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Converting 'NT_incidence' to integer
+df_JH$NT_incidence <- as.integer(df_JH$NT_incidence)
+df_JH$Sex <- factor(df_JH$Sex, levels = c("Male", "Female"))
+```
+
+
+```{r}
+# Stripping white space from character columns in df_umich
+# character_columns <- df_umich %>% 
+#   select_if(is.character) %>% 
+#   names()
+# 
+# df_umich[character_columns] <- lapply(df_umich[character_columns], trimws)
+```
+
+
+```{r}
+# Columns to convert (if they are not already numeric, otherwise this step can be skipped)
+cols_to_convert <- c('wbc_count', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 'mch', 
+                     'mchc', 'rdw', 'mpv', 'absolute_neutrophil', 'absolute_lymphocyte',
+                     'absolute_monocyte', 'crp')
+
+df_umich <- df_umich %>%
+  mutate(across(all_of(cols_to_convert), ~as.numeric(str_trim(.))))
+
+df_umich$Sex <- factor(df_umich$Sex, levels = c("Male", "Female"))
+
+df_umich$NT_incidence <- factor(df_umich$NT_incidence, levels = unique(df_umich$NT_incidence))
+df_JH$NT_incidence <- factor(df_JH$NT_incidence, levels = unique(df_JH$NT_incidence))
+```
+
+
+Include the features from day a to day b for prediction of day b. 
+
+
+```{r}
+# Convert columns to numeric
+# for (col in cols_to_convert) {
+#   df_umich[[col]] <- as.numeric(df_umich[[col]])
+#   # If there are any non-convertible strings, they will be turned into NA
+# }
+
+# Map 'Sex' values from Male/Female to 0/1
+# sex_mapping <- c(Male = 0, Female = 1)
+# df_umich$Sex <- as.integer(factor(df_umich$Sex, levels = names(sex_mapping), labels = sex_mapping))
+# df_JH$Sex <- as.integer(factor(df_JH$Sex, levels = names(sex_mapping), labels = sex_mapping))
+
+# Subset data frames for day 0 of relevant dataset
+#df_umich_dpi_0 <- subset(df_umich, dpi == 0)
+#df_JH_dpi_0 <- subset(df_JH, dpi == 0)
+
+filtered_df_umich_a_to_b <- df_umich %>% filter(dpi >= a & dpi <= b)
+filtered_df_JH_a_to_b <- df_JH %>% filter(dpi >= a & dpi <= b)
+
+# Printing the number of measurements in day 0 datasets, using the sprintf function for string formatting
+cat(sprintf("no of measurements in filtered_df_umich_a_to_b is %s\n", nrow(filtered_df_umich_a_to_b)))
+cat(sprintf("no of measurements in filtered_df_JH_a_to_b is %s\n", nrow(filtered_df_JH_a_to_b)))
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+
+
+
+```{r}
+Prev_dpi_features_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte',
+                   'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+                   'mch', 'mchc', 'rdw', 'mpv',  'crp', 'ferritin')
+```
+
+
+
+
+```{r}
+
+# This implementation didn't take into account the difference in dimensions of data frame with dpi = 0, and dpi = 2. 
+# create_filtered_df <- function(df, a, b, Prev_dpi_features_list) {
+#   # Filter rows where dpi == b
+#   filtered_df <- df[df$dpi == b, ]
+#   cat(sprintf("no of rows in filtered_df is %s\n", nrow(filtered_df)))
+#   # cat (sprintf("current value of dpi is %s\n", dpi))
+# 
+#   # For each previous dpi from a to b-1
+#   for (prev_dpi in a:(b-1)) {
+#     # For each feature in the list
+#     for (feature in Prev_dpi_features_list) {
+#       # Create new column name
+#       new_col_name <- paste0(feature, "_dpi_", prev_dpi)
+#       cat(sprintf("new column name is %s\n", new_col_name))
+#       # Add new column with data from previous dpi
+#       filtered_df[[new_col_name]] <- df[df$dpi == prev_dpi, feature]
+#     }
+#   }
+#   
+#   return(filtered_df)
+# }
+```
+
+
+
+```{r}
+create_filtered_df <- function(df, a, b, Prev_dpi_features_list) {
+  # Filter rows where dpi == b
+  filtered_df <- df[df$dpi == b, ]
+  
+  # For each previous dpi from a to b-1
+  for (prev_dpi in a:(b-1)) {
+    # For each feature in the list
+    for (feature in Prev_dpi_features_list) {
+      # Create new column name
+      new_col_name <- paste0(feature, "_dpi_", prev_dpi)
+      # cat(sprintf(" new column name is. %s\n", new_col_name))
+      # Get data for the previous dpi
+      prev_data <- df[df$dpi == prev_dpi, ]
+      
+      # Merge the previous data with the filtered data
+      filtered_df <- merge(filtered_df, prev_data[, c("studyid", feature)], 
+                           by = "studyid", all.x = TRUE, suffixes = c("", paste0("_dpi_", prev_dpi)))
+      
+      # Rename the merged column
+      names(filtered_df)[names(filtered_df) == paste0(feature, paste0("_dpi_", prev_dpi))] <- new_col_name
+    }
+    # cat(sprintf("done with prev_dpi no. %s\n", prev_dpi))
+  }
+  
+  return(filtered_df)
+}
+```
+
+
+
+```{r}
+# For df_umich
+# sprintf("for Umich data set, I have these additional columns")
+filtered_df_umich_a_to_b <- create_filtered_df(df_umich, a, b, Prev_dpi_features_list)
+# sprintf("for JH data set, I have these additional columns")
+
+# For df_JH
+filtered_df_JH_a_to_b <- create_filtered_df(df_JH, a, b, Prev_dpi_features_list)
+```
+
+
+CONFIRM THAT FILTERED_JH VALUES OF DIFFERENT DPIS FROM DIFFERENT PARTICIPANTS FROM THE ORIGINAL DATAFRAME DF_JH, AND MAKE SURE THOSE VALUES ARE MATCHING. 
+
+```{r}
+for (i in 0:3) {
+  count <- sum(df_umich$dpi == i)
+  cat("Number of rows for dpi =", i, ":", count, "\n")
+}
+``` 
+Dropping all the NAs, across all the columns instead of just 'crp', 'ferritin', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte'. 
+
+```{r}
+library(dplyr)
+
+filtered_df_umich_a_to_b <- filtered_df_umich_a_to_b %>% filter(across(everything(), ~!is.na(.)))        
+library(dplyr)
+
+filtered_df_JH_a_to_b <- filtered_df_JH_a_to_b %>% filter(across(everything(), ~!is.na(.)))
+```
+
+```{r}
+column_names <- names(filtered_df_umich_a_to_b)
+
+```
+
+# Create a vector of features to be standardized
+```{r}
+
+exclude_columns_for_norm <- c("Sex", "dpi" , "studyid", "NT_incidence")
+# norm_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte',
+#                'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 
+#                'mch', 'mchc', 'rdw', 'mpv', 'Age', 'crp', 'ferritin')
+norm_list <- setdiff(column_names, exclude_columns_for_norm)
+
+```
+
+
+```{r}
+# Standardize the data (Z-score normalization)
+filtered_df_umich_a_to_b_norm <- filtered_df_umich_a_to_b
+
+# Calculate mean and standard deviation for each column and then standardize
+filtered_df_umich_a_to_b_norm[norm_list] <- scale(filtered_df_umich_a_to_b_norm[norm_list])              # This is not for standardization being done based on JH dataset. 
+
+```
+
+
+```{r}
+exclude_columns_for_features <- c("dpi" , "studyid", "NT_incidence")
+features_list <- setdiff(column_names,exclude_columns_for_features)
+```
+
+
+```{r}
+# Drop rows with NAs in specific columns. # We might have to drop NAs for all of the cases, because it might not be same variables that will NAs when you try different combinations of dpi's. 
+
+# selected_cols <- c('crp', 'ferritin', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte')
+# filtered_df_umich_a_to_b <- filtered_df_umich_a_to_b %>%
+#   filter(complete.cases(select(., all_of(selected_cols))))
+# 
+# # Create a vector of features to be standardized
+# norm_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte', 
+#                'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv', 
+#                'mch', 'mchc', 'rdw', 'mpv', 'Age', 'crp', 'ferritin')
+# 
+# # Standardize the data (Z-score normalization)
+# filtered_df_umich_a_to_b_norm <- filtered_df_umich_a_to_b
+# 
+# # Calculate mean and standard deviation for each column and then standardize
+# filtered_df_umich_a_to_b_norm[norm_list] <- scale(filtered_df_umich_a_to_b_norm[norm_list])              # This is not for standardization being done based on JH dataset. 
+
+
+# features_list <- c('wbc_count', 'absolute_neutrophil', 'absolute_lymphocyte', 'absolute_monocyte',
+#                    'clinician_defined_crs_grade', 'hgb', 'hct', 'plt', 'rbc_count', 'mcv',
+#                    'mch', 'mchc', 'rdw', 'mpv', 'Sex', 'Age', 'crp', 'ferritin')
+```
+
+
+
+
+
+
+
+
+```{r}
+# Standardizing the John Hopkins data using means and standard deviations from Umich data
+filtered_df_JH_a_to_b_norm <- filtered_df_JH_a_to_b
+
+# Calculate mean and standard deviation from Umich data
+means_umich <- sapply(filtered_df_umich_a_to_b[norm_list], mean, na.rm = TRUE)
+sds_umich <- sapply(filtered_df_umich_a_to_b[norm_list], sd, na.rm = TRUE)
+
+# Apply mean and standard deviation from Umich to standardize JH data
+filtered_df_JH_a_to_b_norm[norm_list] <- sweep(filtered_df_JH_a_to_b_norm[norm_list], 2, means_umich, `-`)             # Standardized according to distribution from University of Michigan dataset. 
+filtered_df_JH_a_to_b_norm[norm_list] <- sweep(filtered_df_JH_a_to_b_norm[norm_list], 2, sds_umich, `/`)
+
+# Convert to matrix X_JH and create a vector y_JH
+#X_JH <- as.matrix(df_JH_dpi_0_norm[features_list])   # This still has missing data. We will have to drop those.
+X_JH <- filtered_df_JH_a_to_b_norm[features_list]
+# y_JH <- df_JH_dpi_0_norm$NT_incidence
+y_JH <- data.frame(NT_incidence = filtered_df_JH_a_to_b_norm$NT_incidence)
+```
+
+
+
+```{r}
+# Select predictors (X) and response variable (y)
+# X <- as.matrix(df_umich_dpi_0_norm[features_list])
+# y <- df_umich_dpi_0_norm$NT_incidence
+X <- filtered_df_umich_a_to_b_norm[features_list]
+y <- data.frame(NT_incidence = filtered_df_umich_a_to_b_norm$NT_incidence)
+
+# Print the structure of X (similar to print(X) in python)
+print(paste("X is", toString(dim(X))))
+
+# Print the structure of y (similar to print(y) in python)
+print(paste("y is", toString(length(y))))
+```
+
+Sex became 1, and 2 instead of 0 and 1, as was in python. 
+
+```{r}
+# Define the control using a random forest selection function
+# Reference : https://towardsdatascience.com/effective-feature-selection-recursive-feature-elimination-using-r-148ff998e4f7
+# control <- rfeControl(functions = rfFuncs, # random forest
+#                       method = "repeatedcv", # repeated cv
+#                       repeats = 5, # number of repeats
+#                       number = 10) # number of folds
+```
+
+
+
+```{r}
+#y<-y$NT_incidence
+#inTrain <- createDataPartition(y, p = .80, list = FALSE)[,1]
+```
+
+
+
+```{r}
+set.seed(123)
+# Define the trainControl with default (accuracy) metric
+trainControl <- trainControl(
+  method = "cv",
+  number = 10,
+  verboseIter = FALSE,
+  returnResamp = "all",
+  savePredictions = TRUE
+)
+```
+
+
+
+```{r}
+# Define the RFE control
+rfeControl <- rfeControl(
+  functions = rfFuncs, # Use Random Forest functions
+  method = "repeatedcv",
+  repeats = 5, # Number of repeats for repeated cross-validation
+  verbose = FALSE
+)
+# Specify the metric to optimize, which is accuracy in this case
+metric <- "Accuracy"
+
+```
+
+
+```{r}
+# Run the RFE algorithm with Random Forest
+result <- rfe(
+  x = X,
+  y = y$NT_incidence,
+  sizes = c(1:18), # Max number of features is 18
+  rfeControl = rfeControl,
+  method = "rf", # Random Forest
+  metric = metric,
+  trControl = trainControl # Specify train controls for model fitting
+)
+
+op_features_rfe = result$optVariables
+```
+
+
+
+```{r}
+df_umich_stage_2 <- X[, op_features_rfe]
+df_JH_stage_2 <- X_JH[, op_features_rfe]
+
+```
+
+
+
+```{r}
+
+#training <- df_umich_stage_2      # This is just the features, second stage labels are still y$NT_incidence
+#test <- df_JH_stage_2
+training <- cbind(df_umich_stage_2, y)
+test <- cbind(df_JH_stage_2,y_JH)
+
+```
+# caret models (from Mary's code)
+
+```{r}
+#Control function
+# control_func <- trainControl(method = "repeatedcv",
+#                            number = 5, #5 fold CV
+#                            repeats = 50, #Repeated 50 times
+#                            summaryFunction = twoClassSummary, 
+#                            selectionFunction = "oneSE",
+#                            classProbs=TRUE, sampling="up", savePredictions = TRUE)
+
+control_func <- trainControl(method = "repeatedcv", 
+                             number = 10, 
+                             repeats = 5, 
+                             summaryFunction = twoClassSummary, 
+                             classProbs = TRUE, # Relevant for ROC metric
+                             savePredictions = "final", 
+                             verboseIter = FALSE)
+
+
+```
+
+
+
+```{r}
+#Boosted Logistic Regression
+set.seed(825)
+levels(training$NT_incidence) <- c("False", "True")
+levels(test$NT_incidence) <- c("False", "True")
+
+BLR <- train(NT_incidence ~ ., data = training, 
+                 method = "LogitBoost", 
+                 trControl = control_func, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))  # I will remove preProc part later and check. 
+
+pred <- predict(BLR, newdata = test)
+# conf_matrix1  <- confusionMatrix(pred, test$NT_incidence, positive="yes")
+conf_matrix1  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix1
+```
+
+
+```{r}
+#Random Forest
+set.seed(825)
+RF <- train(NT_incidence ~ ., data = training, 
+                 method = "rf", 
+                 trControl = control_func, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale")) # I will remove preProc part later and check. 
+
+
+pred <- predict(RF, newdata = test)
+conf_matrix2  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix2
+
+```
+
+
+```{r}
+#SVM Linear Kernel
+set.seed(825)
+SVM <- train(NT_incidence ~ ., data = training, 
+                 method = "svmLinear", 
+                 trControl = control_func, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+pred <- predict(SVM, newdata = test)
+#conf_matrix3  <- confusionMatrix(pred, test$NT_incidence, positive="yes")
+conf_matrix3  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix3
+```
+
+
+```{r}
+# GLMNet
+set.seed(825)
+GLM_net <- train(NT_incidence ~ ., data = training, 
+                 method = "glmnet", 
+                 trControl = control_func, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+pred <- predict(GLM_net, newdata = test)
+#conf_matrix4  <- confusionMatrix(pred, test$NT_incidence, positive="yes")
+conf_matrix4  <- confusionMatrix(pred, test$NT_incidence)
+
+conf_matrix4
+```
+
+
+```{r}
+#=========================================
+# Let me do the confustion matrix for training data set here just  to make sure
+print("This is the one that needs to be compared with the implementation in regression models from glm in the analyzer code")
+pred_training_GLM_net <- predict(GLM_net, newdata = training)
+#conf_matrix4  <- confusionMatrix(pred, test$NT_incidence, positive="yes")
+conf_matrix4_training_GLM_net  <- confusionMatrix(pred_training_GLM_net, training$NT_incidence)
+
+conf_matrix4_training_GLM_net
+
+
+```
+
+
+```{r}
+# Regularized Logistic
+set.seed(825)
+RLR <- train(NT_incidence ~ ., data = training, 
+                 method = "regLogistic", 
+                 trControl = control_func, 
+                 verbose = FALSE,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+pred <- predict(RLR, newdata = test)
+conf_matrix5  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix5
+```
+
+
+```{r}
+# KNN nearest neighbor
+set.seed(825)
+KNN <- train(NT_incidence ~ ., data = training, 
+                 method = "knn", 
+                 trControl = control_func,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+pred <- predict(KNN, newdata = test)
+conf_matrix6  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix6
+```
+
+
+```{r}
+# PLR
+set.seed(825)
+PLR <- train(NT_incidence ~ ., data = training, 
+                 method = "plr", 
+                 trControl = control_func,
+                 metric = "ROC", preProc = c("center", "scale"))
+
+pred <- predict(PLR, newdata = test)
+conf_matrix7  <- confusionMatrix(pred, test$NT_incidence)
+conf_matrix7
+```
+
+
+```{r}
+# ROC curve generation for test set
+prob_BLR <- predict(BLR, test, type="prob") # Prediction
+prob_RF <- predict(RF, test, type="prob") # Prediction
+prob_SVM <- predict(SVM, test, type="prob") # Prediction
+prob_GLM <- predict(GLM_net, test, type="prob") # Prediction
+prob_RLR <- predict(RLR, test, type="prob") # Prediction
+prob_KNN <- predict(KNN, test, type="prob") # Prediction
+prob_PLR <- predict(PLR, test, type="prob") # Prediction
+
+DF_BLR<- data.frame(prob_BLR, test$NT_incidence, Group = "BLR")
+DF_RF<- data.frame(prob_RF, test$NT_incidence, Group = "RF")
+DF_SVM<- data.frame(prob_SVM, test$NT_incidence, Group = "SVM")
+DF_GLM<- data.frame(prob_GLM, test$NT_incidence, Group = "GLMnet")
+DF_RLR<- data.frame(prob_RLR, test$NT_incidence, Group = "RLR")
+DF_KNN<- data.frame(prob_KNN, test$NT_incidence, Group = "KNN")
+DF_PLR<- data.frame(prob_PLR, test$NT_incidence, Group = "PLR")
+
+#DF_combo<- combine(DF_SVM, DF_KNN, DF_PLR)
+DF_combo <- bind_rows(DF_SVM, DF_KNN, DF_PLR)
+
+
+ROC_Curve <- evalm(data.frame(DF_combo), bins=5)
+ROC_Curve$stdres
+
+ # pdf("MLeval_Test_06-29_Day0_ONLY_MONP,MON#,RBC,NEUP,Age.pdf", width=7, height=5)
+  ROC_Curve
+
+
+```
+
+
+```{r}
+# ROC curve generation for training set
+prob_BLR_TRAIN <- predict(BLR, training, type="prob") # Prediction
+prob_RF_TRAIN <- predict(RF, training, type="prob") # Prediction
+prob_SVM_TRAIN <- predict(SVM, training, type="prob") # Prediction
+prob_GLM_TRAIN <- predict(GLM_net, training, type="prob") # Prediction
+prob_RLR_TRAIN <- predict(RLR, training, type="prob") # Prediction
+prob_KNN_TRAIN <- predict(KNN, training, type="prob") # Prediction
+prob_PLR_TRAIN <- predict(PLR, training, type="prob") # Prediction
+
+DF_BLR_TRAIN<- data.frame(prob_BLR_TRAIN, training$NT_incidence, Group = "BLR")
+DF_RF_TRAIN<- data.frame(prob_RF_TRAIN, training$NT_incidence, Group = "RF")
+DF_SVM_TRAIN<- data.frame(prob_SVM_TRAIN, training$NT_incidence, Group = "SVM")
+DF_GLM_TRAIN<- data.frame(prob_GLM_TRAIN, training$NT_incidence, Group = "GLMnet")
+DF_RLR_TRAIN<- data.frame(prob_RLR_TRAIN, training$NT_incidence, Group = "RLR")
+DF_KNN_TRAIN<- data.frame(prob_KNN_TRAIN, training$NT_incidence, Group = "KNN")
+DF_PLR_TRAIN<- data.frame(prob_PLR_TRAIN, training$NT_incidence, Group = "PLR")
+
+DF_combo_TRAIN<- vctrs::vec_c(!!!list(DF_SVM_TRAIN, DF_KNN_TRAIN, DF_PLR_TRAIN))
+
+ROC_Curve_TRAIN <- evalm(data.frame(DF_combo_TRAIN), bins=10)
+ROC_Curve_TRAIN$stdres
+
+  #pdf("MLeval_Training_06-29_Day0_ONLY_MONP,MON#,RBC,NEUP,Age.pdf", width=7, height=5)
+  ROC_Curve_TRAIN
+```
+
+
+
+```{r}
+library(pROC)
+
+roc_BLR <- roc(test$NT_incidence, as.numeric(prob_BLR[,"False"])) # Positive class is False
+
+roc_RF <- roc(test$NT_incidence, as.numeric(prob_RF[,"False"]))
+roc_SVM <- roc(test$NT_incidence, as.numeric(prob_SVM[,"False"]))
+roc_GLM <- roc(test$NT_incidence, as.numeric(prob_GLM[,"False"]))
+roc_RLR <- roc(test$NT_incidence, as.numeric(prob_RLR[,"False"]))
+roc_KNN <- roc(test$NT_incidence, as.numeric(prob_KNN[,"False"]))
+roc_PLR <- roc(test$NT_incidence, as.numeric(prob_PLR[,"False"]))
+
+
+plot(roc_BLR, col="red")
+par(new=TRUE)
+plot(roc_RF, col="blue", add=TRUE)
+plot(roc_SVM, col="green", add=TRUE)
+plot(roc_GLM, col="cyan", add=TRUE)
+plot(roc_RLR, col="magenta", add=TRUE)
+plot(roc_KNN, col="yellow", add=TRUE)
+plot(roc_PLR, col="black", add=TRUE)
+
+
+legend("bottomright", legend=c("BLR", "RF", "SVM", "GLMnet", "RLR", "KNN", "PLR"),
+       col=c("red", "blue", "green", "cyan", "magenta", "yellow", "black"), lwd=2)
+
+```
+
+
+```{r}
+library(pROC)
+
+# Function to plot a ROC curve
+plot_model_roc <- function(test_labels, model_probs, model_name, color) {
+  roc_obj <- roc(test_labels, as.numeric(model_probs[,"True"]),
+                 percent = TRUE,
+                 col = color,
+                 print.auc = TRUE,
+                 main = "ROC Curves",
+                 print.thres = TRUE)
+                 
+  plot(roc_obj, col=color, add=TRUE)
+  return(roc_obj$auc)
+}
+
+# Start new plot
+plot(roc(test$NT_incidence, as.numeric(prob_BLR[,"True"]), percent = TRUE),
+     col="red", main="ROC Curves", print.auc=TRUE, print.thres=TRUE)
+
+# Set seed to ensure reproducibility
+set.seed(825)
+
+# Initialize an empty list to store AUC values
+auc_list <- list()
+
+# Plot ROC and capture AUC for each model
+auc_list$BLR <- plot_model_roc(test$NT_incidence, prob_BLR, "BLR", "red")
+auc_list$RF <- plot_model_roc(test$NT_incidence, prob_RF, "RF", "blue")
+auc_list$SVM <- plot_model_roc(test$NT_incidence, prob_SVM, "SVM", "green")
+auc_list$GLMnet <- plot_model_roc(test$NT_incidence, prob_GLM, "GLMnet", "cyan")
+auc_list$RLR <- plot_model_roc(test$NT_incidence, prob_RLR, "RLR", "magenta")
+auc_list$KNN <- plot_model_roc(test$NT_incidence, prob_KNN, "KNN", "yellow")
+auc_list$PLR <- plot_model_roc(test$NT_incidence, prob_PLR, "PLR", "black")
+
+# Create the legend separately
+legend("bottomright", legend=names(auc_list),
+       col=c("red", "blue", "green", "cyan", "magenta", "yellow", "black"),
+       lwd=2)
+
+# Optionally, you can print out AUC values
+print(auc_list)
+```
+
+
+```{r}
+library(pROC)
+
+# Plot initial ROC curve (using any model, here BLR, for initial setup)
+roc_obj <- roc(response=test$NT_incidence, predictor=as.numeric(prob_BLR[,"True"]))
+plot(roc_obj, percent=TRUE, col="#CC0000", main="ROC Curves", print.auc=TRUE, rev="x")
+
+# Function to add ROC curves to the existing plot
+add_model_roc_curve <- function(response, predictor, color) {
+  roc_obj <- roc(response, predictor)
+  lines(roc_obj, percent=TRUE, col=color, print.auc=TRUE, rev="x")
+  return(auc(roc_obj))
+}
+
+# Add ROC curves for each model to the plot
+aucs <- list(
+  BLR   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_BLR[,"True"]), "#CC0000"),
+  RF    = add_model_roc_curve(test$NT_incidence, as.numeric(prob_RF[,"True"]), "#0000FF"),
+  SVM   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_SVM[,"True"]), "#008800"),
+  GLM   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_GLM[,"True"]), "#00CCCC"),
+  RLR   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_RLR[,"True"]), "#CC00CC"),
+  KNN   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_KNN[,"True"]), "#CCCC00"),
+  PLR   = add_model_roc_curve(test$NT_incidence, as.numeric(prob_PLR[,"True"]), "#000000")
+)
+
+# Add a legend to the plot
+legend("bottomright", legend=names(aucs), col=c("#CC0000", "#0000FF", "#008800", "#00CCCC", "#CC00CC", "#CCCC00", "#000000"), lwd=2)
+
+# Optionally, print out the AUC values
+print(aucs)
+```
+
